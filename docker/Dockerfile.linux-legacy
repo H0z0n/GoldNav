@@ -1,0 +1,54 @@
+# Сборочное окружение для максимальной совместимости goldnav_mm.so/goldnav_amxx_i386.so
+# со старыми/минимальными Linux-серверами (типичная среда для CS 1.6 хостинга).
+#
+# Почему это нужно: glibc обратно совместим (бинарник, собранный против старой
+# glibc, работает на новой), но НЕ вперёд совместим (собранный против новой glibc
+# не запустится на старой — dlopen() падает, Metamod-R помечает плагин как "badf").
+# Сборка на свежем Ubuntu 24.04 требует glibc >= 2.38 (2023 год) даже после
+# статической линковки libstdc++/libgcc — сама glibc статически не линкуется.
+# Сборка в этом контейнере (Ubuntu 18.04, glibc 2.27) даёт итоговый бинарник,
+# требующий всего glibc >= 2.17 (2012 год) — воспроизведено и подтверждено:
+# `objdump -T goldnav_mm.so | grep GLIBC` после сборки в этом образе показывает
+# максимум GLIBC_2.17, а после сборки на Ubuntu 24.04 — GLIBC_2.38.
+#
+# Ubuntu 18.04 (не 20.04/22.04) выбран как разумный компромисс: достаточно старый
+# для широкой совместимости, но ещё получает apt-пакеты по обычным зеркалам
+# (в отличие, например, от Ubuntu 16.04, уже полностью в old-releases).
+#
+# Использование:
+#   docker build -f docker/Dockerfile.linux-legacy -t goldnav-build .
+#   docker run --rm -v "$(pwd)":/work goldnav-build \
+#       bash -c "cmake -S /work -B /work/build/linux-legacy -G Ninja \
+#                -DCMAKE_TOOLCHAIN_FILE=/work/cmake/Toolchain-linux-i686.cmake \
+#                -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
+#                -DGOLDNAV_BUILD_ENGINE_MODULE=ON -DGOLDNAV_BUILD_AMXX=ON \
+#                && cmake --build /work/build/linux-legacy"
+#
+# apt в Ubuntu 18.04 даёт cmake 3.10 — слишком старый (нужен >= 3.16, у нас в
+# CMakeLists.txt). pip тоже не годится (pip 9.0.1 из 18.04 не умеет современные
+# wheel-теги, собирать cmake из исходников через него — боль). Поэтому cmake/ninja
+# ставятся готовыми бинарными релизами напрямую с GitHub.
+
+FROM ubuntu:18.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+        g++-multilib gcc-multilib \
+        wget unzip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN wget -q -O /tmp/cmake.tar.gz \
+        https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz \
+    && tar xzf /tmp/cmake.tar.gz -C /opt \
+    && ln -s /opt/cmake-3.28.3-linux-x86_64/bin/cmake /usr/local/bin/cmake \
+    && ln -s /opt/cmake-3.28.3-linux-x86_64/bin/ctest /usr/local/bin/ctest \
+    && rm /tmp/cmake.tar.gz
+
+RUN wget -q -O /tmp/ninja.zip \
+        https://github.com/ninja-build/ninja/releases/download/v1.11.1/ninja-linux.zip \
+    && unzip -o /tmp/ninja.zip -d /usr/local/bin \
+    && chmod +x /usr/local/bin/ninja \
+    && rm /tmp/ninja.zip
+
+WORKDIR /work

@@ -1,0 +1,3 @@
+LIBRARY goldnav_mm
+EXPORTS
+	GiveFnptrsToDll			@1

@@ -1,0 +1,6 @@
+[submodule "third_party/metamod-r"]
+	path = third_party/metamod-r
+	url = https://github.com/theAsmodai/metamod-r.git
+[submodule "third_party/amxmodx"]
+	path = third_party/amxmodx
+	url = https://github.com/alliedmodders/amxmodx.git

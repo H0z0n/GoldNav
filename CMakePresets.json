@@ -1,0 +1,97 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": { "major": 3, "minor": 23, "patch": 0 },
+    "configurePresets": [
+        {
+            "name": "tests-only",
+            "displayName": "Engine-agnostic core + unit tests (no SDK required)",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "Win32",
+            "binaryDir": "${sourceDir}/build/tests-only",
+            "cacheVariables": {
+                "GOLDNAV_BUILD_TESTS": "ON",
+                "GOLDNAV_BUILD_ENGINE_MODULE": "OFF"
+            }
+        },
+        {
+            "name": "windows-msvc-x86",
+            "displayName": "Windows MSVC (Win32/x86, full engine module)",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "Win32",
+            "binaryDir": "${sourceDir}/build/windows-msvc-x86",
+            "cacheVariables": {
+                "GOLDNAV_BUILD_TESTS": "ON",
+                "GOLDNAV_BUILD_ENGINE_MODULE": "ON"
+            }
+        },
+        {
+            "name": "windows-llvm-mingw-i686",
+            "displayName": "Windows llvm-mingw i686 (verified alternative to MSVC — see docs/build_windows.md)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/windows-llvm-mingw-i686",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "i686-w64-mingw32-gcc",
+                "CMAKE_CXX_COMPILER": "i686-w64-mingw32-g++",
+                "GOLDNAV_BUILD_TESTS": "ON",
+                "GOLDNAV_BUILD_ENGINE_MODULE": "ON",
+                "GOLDNAV_BUILD_AMXX": "ON"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "linux-gcc-x86",
+            "displayName": "Linux gcc -m32 (full engine module)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/linux-gcc-x86",
+            "toolchainFile": "${sourceDir}/cmake/Toolchain-linux-i686.cmake",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_CXX_COMPILER": "g++",
+                "GOLDNAV_BUILD_TESTS": "ON",
+                "GOLDNAV_BUILD_ENGINE_MODULE": "ON"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "linux-clang-x86",
+            "displayName": "Linux clang -m32 (full engine module)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/linux-clang-x86",
+            "toolchainFile": "${sourceDir}/cmake/Toolchain-linux-i686.cmake",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "GOLDNAV_BUILD_TESTS": "ON",
+                "GOLDNAV_BUILD_ENGINE_MODULE": "ON"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        }
+    ],
+    "buildPresets": [
+        { "name": "tests-only", "configurePreset": "tests-only", "configuration": "RelWithDebInfo" },
+        { "name": "windows-msvc-x86", "configurePreset": "windows-msvc-x86", "configuration": "RelWithDebInfo" },
+        { "name": "windows-llvm-mingw-i686", "configurePreset": "windows-llvm-mingw-i686" },
+        { "name": "linux-gcc-x86", "configurePreset": "linux-gcc-x86" },
+        { "name": "linux-clang-x86", "configurePreset": "linux-clang-x86" }
+    ],
+    "testPresets": [
+        {
+            "name": "tests-only",
+            "configurePreset": "tests-only",
+            "configuration": "RelWithDebInfo",
+            "output": { "outputOnFailure": true }
+        }
+    ]
+}
