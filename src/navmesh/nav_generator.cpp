@@ -1,5 +1,6 @@
 #include "nav_generator.h"
 
+#include <algorithm>
 #include <cmath>
 #include "platform/platform_time.h"
 
@@ -12,6 +13,7 @@ namespace {
 constexpr float kNodeMergeTolerance = 9.0f;
 constexpr float kSeedDropDistance = 4096.0f;
 constexpr float kDeepWaterHeight = 40.0f;
+constexpr float kGroundCheckDistance = 4.0f;
 } // namespace
 
 void NavMeshGenerator::Begin(NavGrid& grid, const ICollisionWorld& world, NavLayer layer, const NavGenConfig& config)
@@ -27,13 +29,47 @@ void NavMeshGenerator::Begin(NavGrid& grid, const ICollisionWorld& world, NavLay
     grid.Initialize(layer, config.cellSize);
 }
 
-uint32_t NavMeshGenerator::FindOrCreateNode(int gx, int gy, const Vec3& feet, bool& outCreated)
+uint8_t NavMeshGenerator::FitMask(const Vec3& center) const
 {
-    outCreated = false;
+    const LayerSpec& spec = m_grid->Spec();
+    uint8_t mask = 0;
+    for (int v = 0; v < spec.variantCount; ++v)
+    {
+        if (HullFits(*m_world, center, spec.variants[v]))
+        {
+            mask |= VariantBit(v);
+        }
+    }
+    return mask;
+}
+
+uint32_t NavMeshGenerator::FindOrCreateNode(int gx, int gy, const Vec3& feet, bool& outQueue)
+{
+    outQueue = false;
 
     const uint32_t existing = m_grid->FindNodeInColumn(gx, gy, feet.z, kNodeMergeTolerance);
     if (existing != kInvalidNodeId)
     {
+        NavNode& node = m_grid->Node(existing);
+        if (node.variantMask != 0)
+        {
+            return existing;
+        }
+
+        // "Мёртвый" узел (раньше здесь стояло препятствие), а пробник снова сюда дошёл —
+        // оживляем и раскрываем заново.
+        const uint8_t mask = FitMask(node.pos);
+        if (mask == 0)
+        {
+            return kInvalidNodeId;
+        }
+        node.variantMask = mask;
+        if (node.expanded)
+        {
+            node.expanded = false;
+            node.revalidate = true;
+            outQueue = true;
+        }
         return existing;
     }
 
@@ -51,15 +87,7 @@ uint32_t NavMeshGenerator::FindOrCreateNode(int gx, int gy, const Vec3& feet, bo
         return kInvalidNodeId;
     }
 
-    const LayerSpec& spec = m_grid->Spec();
-    uint8_t variantMask = 0;
-    for (int v = 0; v < spec.variantCount; ++v)
-    {
-        if (HullFits(*m_world, center, spec.variants[v]))
-        {
-            variantMask |= VariantBit(v);
-        }
-    }
+    const uint8_t variantMask = FitMask(center);
     if (variantMask == 0)
     {
         return kInvalidNodeId;
@@ -75,7 +103,7 @@ uint32_t NavMeshGenerator::FindOrCreateNode(int gx, int gy, const Vec3& feet, bo
         }
     }
 
-    outCreated = true;
+    outQueue = true;
     return m_grid->AddNode(gx, gy, feet.z, variantMask, flags);
 }
 
@@ -128,7 +156,8 @@ bool NavMeshGenerator::AddSeed(const Vec3& position)
     int gy = 0;
     m_grid->WorldToCell(floor, gx, gy);
 
-    if (m_grid->FindNodeInColumn(gx, gy, floor.z, m_config.probe.stepHeight) != kInvalidNodeId)
+    const uint32_t here = m_grid->FindNodeInColumn(gx, gy, floor.z, m_config.probe.stepHeight);
+    if (here != kInvalidNodeId && m_grid->Node(here).variantMask != 0)
     {
         return true; // здесь уже есть навмеш
     }
@@ -147,14 +176,14 @@ bool NavMeshGenerator::AddSeed(const Vec3& position)
             continue;
         }
 
-        bool created = false;
-        const uint32_t node = FindOrCreateNode(cx, cy, probe.feet, created);
+        bool queue = false;
+        const uint32_t node = FindOrCreateNode(cx, cy, probe.feet, queue);
         if (node == kInvalidNodeId)
         {
             continue;
         }
         any = true;
-        if (created)
+        if (queue)
         {
             m_queue.push_back(node);
         }
@@ -167,9 +196,87 @@ bool NavMeshGenerator::AddSeed(const Vec3& position)
     return any;
 }
 
+size_t NavMeshGenerator::InvalidateRegion(const Vec3& mins, const Vec3& maxs)
+{
+    if (!m_grid || m_grid->NodeCount() == 0)
+    {
+        return 0;
+    }
+
+    const LayerSpec& spec = m_grid->Spec();
+    const HullDef& tallest = GetHullDef(spec.variants[spec.variantCount - 1]);
+
+    // Узел затронут, если его хулл мог касаться изменившегося объёма — либо если это
+    // делал хулл, идущий от него к соседу (отсюда запас в одну клетку). По высоте:
+    // сверху могли спрыгивать сюда, снизу — запрыгивать.
+    const float margin = tallest.halfWidth + m_grid->CellSize() + 2.0f;
+    const float zLow = mins.z - tallest.height - std::max(m_config.maxJump, m_config.probe.stepHeight) - 2.0f;
+    const float zHigh = maxs.z + m_config.probe.maxDrop + m_config.probe.stepHeight + 2.0f;
+
+    int gx0 = 0, gy0 = 0, gx1 = 0, gy1 = 0;
+    m_grid->WorldToCell(Vec3(mins.x - margin, mins.y - margin, 0.0f), gx0, gy0);
+    m_grid->WorldToCell(Vec3(maxs.x + margin, maxs.y + margin, 0.0f), gx1, gy1);
+
+    size_t count = 0;
+    for (int gx = gx0; gx <= gx1; ++gx)
+    {
+        for (int gy = gy0; gy <= gy1; ++gy)
+        {
+            for (uint32_t id = m_grid->ColumnHead(gx, gy); id != kInvalidNodeId; id = m_grid->Node(id).nextInColumn)
+            {
+                NavNode& node = m_grid->Node(id);
+                if (node.pos.z < zLow || node.pos.z > zHigh)
+                {
+                    continue;
+                }
+                if (node.expanded)
+                {
+                    node.expanded = false;
+                    node.revalidate = true;
+                    m_queue.push_back(id);
+                }
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+bool NavMeshGenerator::RevalidateNode(uint32_t nodeId)
+{
+    // Может ли хулл по-прежнему здесь стоять: место свободно и под ногами есть пол.
+    const LayerSpec& spec = m_grid->Spec();
+    const Vec3 center = m_grid->Node(nodeId).pos;
+
+    uint8_t mask = FitMask(center);
+    if (mask != 0)
+    {
+        HullTrace down;
+        const Vec3 start(center.x, center.y, center.z + 1.0f);
+        m_world->TraceHull(start, Vec3(center.x, center.y, center.z - kGroundCheckDistance), spec.variants[0], down);
+        if (!down.Hit() || down.normal.z < m_config.probe.minGroundNormalZ)
+        {
+            mask = 0; // пол из-под узла убрали (узел стоял на ящике/двери)
+        }
+    }
+
+    m_grid->Node(nodeId).variantMask = mask;
+    return mask != 0;
+}
+
 void NavMeshGenerator::ExpandNode(uint32_t nodeId)
 {
     const LayerSpec& spec = m_grid->Spec();
+
+    if (m_grid->Node(nodeId).revalidate)
+    {
+        m_grid->Node(nodeId).revalidate = false;
+        m_grid->ClearEdges(nodeId);
+        if (!RevalidateNode(nodeId))
+        {
+            return;
+        }
+    }
 
     // Копии: AddNode ниже может перевыделить массив узлов.
     const Vec3 from = m_grid->Node(nodeId).pos;
@@ -189,9 +296,11 @@ void NavMeshGenerator::ExpandNode(uint32_t nodeId)
             continue;
         }
 
+        bool linked = false;
+
         // От высокого варианта к низкому: где прошёл высокий хулл, пройдёт и низкий
         // того же основания — второй раз трассировать не нужно.
-        for (int v = spec.variantCount - 1; v >= 0; --v)
+        for (int v = spec.variantCount - 1; v >= 0 && !linked; --v)
         {
             if ((fromMask & VariantBit(v)) == 0)
             {
@@ -208,8 +317,8 @@ void NavMeshGenerator::ExpandNode(uint32_t nodeId)
                 break;
             }
 
-            bool created = false;
-            const uint32_t target = FindOrCreateNode(tx, ty, probe.feet, created);
+            bool queue = false;
+            const uint32_t target = FindOrCreateNode(tx, ty, probe.feet, queue);
             if (target == kInvalidNodeId)
             {
                 break;
@@ -223,14 +332,65 @@ void NavMeshGenerator::ExpandNode(uint32_t nodeId)
             passMask &= fromMask;
             passMask &= m_grid->Node(target).variantMask;
 
+            const bool isDrop = probe.kind == ProbeKind::Drop;
             m_grid->SetEdge(nodeId, dir, target, passMask,
-                            probe.kind == ProbeKind::Drop ? static_cast<uint8_t>(kEdgeDrop)
-                                                          : static_cast<uint8_t>(kEdgeWalk));
-            if (created)
+                            isDrop ? static_cast<uint8_t>(kEdgeDrop) : static_cast<uint8_t>(kEdgeWalk),
+                            isDrop ? from.z - probe.feet.z : 0.0f);
+            if (queue)
             {
                 m_queue.push_back(target);
             }
+            linked = passMask != 0;
             break;
+        }
+
+        // Шагом не пройти — может быть, можно запрыгнуть (только по прямым направлениям).
+        if (linked || NavDirIsDiagonal(dir) || m_config.maxJump <= m_config.probe.stepHeight)
+        {
+            continue;
+        }
+
+        // Сначала самым низким вариантом: не запрыгнул он — не запрыгнет и высокий.
+        uint8_t jumpMask = 0;
+        Vec3 landing;
+        float rise = 0.0f;
+        for (int v = 0; v < spec.variantCount; ++v)
+        {
+            if ((fromMask & VariantBit(v)) == 0)
+            {
+                continue;
+            }
+            Vec3 feet;
+            float r = 0.0f;
+            if (!ProbeJump(*m_world, from, targetX, targetY, spec.variants[v], m_config.probe, m_config.maxJump, feet, r))
+            {
+                break;
+            }
+            if (jumpMask == 0)
+            {
+                landing = feet;
+                rise = r;
+            }
+            jumpMask |= VariantBit(v);
+        }
+
+        if (jumpMask == 0 || std::fabs(landing.z) > m_config.maxCoord)
+        {
+            continue;
+        }
+
+        bool queue = false;
+        const uint32_t target = FindOrCreateNode(tx, ty, landing, queue);
+        if (target == kInvalidNodeId)
+        {
+            continue;
+        }
+
+        jumpMask &= m_grid->Node(target).variantMask;
+        m_grid->SetEdge(nodeId, dir, target, jumpMask, kEdgeJump, rise);
+        if (queue)
+        {
+            m_queue.push_back(target);
         }
     }
 }

@@ -12,6 +12,7 @@ set(GOLDNAV_TEST_SOURCES
     test_path_planner.cpp
     test_ground_mover.cpp
     test_path_follower.cpp
+    test_dynamic.cpp
 )
 
 foreach(test_src ${GOLDNAV_TEST_SOURCES})

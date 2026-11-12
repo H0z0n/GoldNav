@@ -7,7 +7,9 @@
 //   - высота учитывается: точка этажом выше/ниже не засчитывается;
 //   - перед целью — плавное торможение и остановка точно в ней;
 //   - упёрлись в другую entity — обходим её боком, а не толкаемся в лоб;
-//   - нет продвижения — не стоим вечно, а сообщаем наверх, чтобы путь перестроили.
+//   - нет продвижения — не стоим вечно, а сообщаем наверх, чтобы путь перестроили;
+//   - скорость меняется с инерцией: плавный разгон и повороты по дуге;
+//   - если entity умеет прыгать (FollowState::jumpHeight), запрыгивает на уступы.
 #pragma once
 
 #include "follower_types.h"
@@ -17,7 +19,13 @@ namespace goldnav {
 
 struct PathFollowerConfig
 {
-    float waypointRadius = 6.0f;        // радиус "дошли" для промежуточной точки
+    float waypointRadius = 6.0f;        // минимальный радиус "дошли" для промежуточной точки
+    float turnInPerSpeed = 0.06f;       // на скорости радиус растёт: speed * это (поворот начинается заранее)
+    float maxTurnInRadius = 16.0f;      // ...но не больше этого
+    float acceleration = 6.0f;          // инерция: за секунду скорость меняется не больше чем на speed * это (0 — без инерции)
+    float jumpMargin = 10.0f;           // прыгаем на столько юнитов выше, чем нужно
+    float jumpCooldown = 0.6f;          // пауза между попытками прыжка, с
+    float jumpMaxDistance = 48.0f;      // прыгаем, только если точка на уступе не дальше этого
     float waypointHeightTolerance = 16.0f; // и допустимая разница высот с ней: точка на уступе над головой не считается
     float finalRadius = 2.0f;           // радиус "дошли" для последней точки
     float heightTolerance = 40.0f;      // допустимая разница высот с точкой
@@ -42,6 +50,7 @@ struct FollowStep
     float speed = 0.0f;       // фактическая горизонтальная скорость за шаг
     int touchedEntity = -1;   // entity, которой коснулись за шаг
     bool blocked = false;     // упёрлись в препятствие
+    bool jumped = false;      // в этом шаге начали прыжок
     int blockEntity = -1;     // во что (0 — карта, >0 — entity)
     Vec3 blockNormal;
     bool stuckInSolid = false;
@@ -63,7 +72,7 @@ private:
     PathFollowerConfig m_config;
 
     // Продвигает currentIndex, пока текущая точка достигнута. true — путь пройден.
-    bool AdvanceWaypoints(FollowState& state, const Vec3& feet, bool onGround) const;
+    bool AdvanceWaypoints(FollowState& state, const Vec3& feet, bool onGround, float speed) const;
 };
 
 } // namespace goldnav

@@ -32,6 +32,7 @@ enum : uint8_t
     kEdgeNone = 0,
     kEdgeWalk = 1,
     kEdgeDrop = 2,
+    kEdgeJump = 3, // запрыгнуть на уступ выше ступеньки
 };
 
 enum : uint8_t
@@ -41,6 +42,17 @@ enum : uint8_t
 };
 
 constexpr uint8_t kMaxWallDist = 3;
+
+inline uint8_t NavEncodeHeight(float height)
+{
+    const float half = height * 0.5f + 0.5f;
+    return half <= 0.0f ? 0 : (half >= 255.0f ? 255 : static_cast<uint8_t>(half));
+}
+
+inline float NavDecodeHeight(uint8_t encoded)
+{
+    return static_cast<float>(encoded) * 2.0f;
+}
 
 struct NavNode
 {
@@ -52,6 +64,9 @@ struct NavNode
     uint32_t edgeTarget[kNavDirCount];
     uint8_t edgeMask[kNavDirCount];
     uint8_t edgeType[kNavDirCount];
+    // Для Drop — высота спрыгивания, для Jump — высота подъёма (в двойных юнитах, см.
+    // NavEncodeHeight): разные entity прыгают по-разному, фильтр — на этапе поиска пути.
+    uint8_t edgeHeight[kNavDirCount];
 
     uint8_t variantMask = 0; // какие варианты хулла здесь помещаются
     uint8_t flags = 0;
@@ -59,6 +74,7 @@ struct NavNode
     // для каждого варианта, не больше kMaxWallDist. 0 — узел вплотную к границе.
     uint8_t wallDist[kMaxLayerVariants] = { 0, 0 };
     bool expanded = false;
+    bool revalidate = false; // узел уже раскрывался: при повторном раскрытии перепроверить его самого
 
     NavNode()
     {
@@ -67,6 +83,7 @@ struct NavNode
             edgeTarget[i] = kInvalidNodeId;
             edgeMask[i] = 0;
             edgeType[i] = kEdgeNone;
+            edgeHeight[i] = 0;
         }
     }
 };
@@ -96,7 +113,8 @@ public:
 
     uint32_t AddNode(int gx, int gy, float z, uint8_t variantMask, uint8_t flags);
 
-    void SetEdge(uint32_t from, int dir, uint32_t to, uint8_t variantMask, uint8_t type);
+    void SetEdge(uint32_t from, int dir, uint32_t to, uint8_t variantMask, uint8_t type, float height = 0.0f);
+    void ClearEdges(uint32_t nodeId);
 
     // Ближайший к точке узел, где помещается вариант variant. zWeight > 1 делает
     // разницу по высоте "дороже" (чтобы не прилипать к этажу выше/ниже).

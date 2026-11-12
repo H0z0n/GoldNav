@@ -10,7 +10,16 @@ its way.
 The navigation grid is built automatically when a map starts (a fraction of a second to a
 couple of seconds). No waypoint files to prepare.
 
-Version: **1.0.0-beta** · Author: **Hozon** · Telegram: [@AmxM0dX](https://t.me/AmxM0dX)
+Version: **1.1.0-beta** · Author: **Hozon** · Telegram: [@AmxM0dX](https://t.me/AmxM0dX)
+
+## What's new in 1.1
+
+- **Dynamic objects.** The navmesh follows the map: when a door opens or closes, glass breaks, or
+  someone places a crate or any other `SOLID_BBOX` entity, the grid around it is rebuilt
+  automatically and walking entities re-plan. Turn off with `goldnav_dynamic 0`.
+- **Jumping.** `goldnav_set_jump_height(ent, height)` lets an entity jump onto ledges and crates up
+  to that height; `goldnav_set_max_drop(ent, height)` limits how far it is willing to drop.
+- **Smoothness.** Acceleration and braking with inertia, turns along an arc, earlier turn-in.
 
 ## What's inside
 
@@ -43,9 +52,12 @@ Prebuilt files are in [`dist/`](dist/) (and attached to the release).
 | `goldnav_goto` / `/goto` | send your chickens to the point you are aiming at (the path is drawn as a beam) |
 | `goldnav_goto x y z` | ...or to explicit coordinates |
 | `goldnav_follow` / `/follow` | chickens follow you |
+| `goldnav_block` / `/block` | place an obstacle (a red chicken) where you aim — chickens walk around it |
+| `goldnav_unblock` / `/unblock` | remove your obstacles |
 | `goldnav_stop`, `goldnav_remove`, `goldnav_where` | stop / remove / print aim coordinates |
 
-Plugin cvars: `goldnav_chicken_speed 150`, `goldnav_chicken_path 1`, `goldnav_chicken_admin 0`.
+Plugin cvars: `goldnav_chicken_speed 150`, `goldnav_chicken_jump 45`, `goldnav_chicken_path 1`,
+`goldnav_chicken_admin 0`.
 
 ## Using it in your own plugin
 
@@ -54,6 +66,7 @@ Plugin cvars: `goldnav_chicken_speed 150`, `goldnav_chicken_path 1`, `goldnav_ch
 
 public send(ent, Float:goal[3])
 {
+    goldnav_set_jump_height(ent, 45.0);  // optional: can jump onto 45-unit ledges
     goldnav_move_to(ent, goal, 200.0);   // the module does everything else
 }
 
@@ -76,16 +89,19 @@ The core and its unit tests build without any SDK: `-DGOLDNAV_BUILD_ENGINE_MODUL
 
 ## What has been tested
 
-- 9 unit-test suites for the core (generator, pathfinding, walker, path following) on a synthetic world.
+- 10 unit-test suites for the core (generator, pathfinding, walker, path following) on a synthetic world.
 - A live Windows HLDS (build 6153, Metamod 1.21-am, AMX Mod X 1.9, ReGameDLL): an entity walks
   spawn ↔ spawn routes on de_dust2, de_nuke, de_inferno, de_aztec, de_train, de_cbble,
   cs_office, cs_italy, cs_assault, cs_militia and stops within ~2 units of the goal.
 - The Linux build (`.so`) is compiled from the same sources and passes the same unit tests;
   this version has not been run on a live Linux server yet.
+- Version 1.1 on a live server (de_dust2): walking around an obstacle placed on the path, a jump
+  onto a 59-unit ledge, 4 routes without a single re-plan. Doors were not tested on a live server
+  (they use the same grid-update mechanism as obstacles, which is covered by a unit test).
 - Not verified visually in the game client: movement smoothness and animation.
 
 ## Limitations (short)
 
-Players and bots are not moved by the module; no ladders, no upward jumps; doors are taken
-in the state they had at generation time (`goldnav_rebuild` after changes). Full list:
+Players and bots are not moved by the module; no ladders (`func_ladder`), no jumps across gaps;
+an entity does not open doors itself (it waits until one is opened, or goes around). Full list:
 [docs/roadmap_deferred.md](docs/roadmap_deferred.md).

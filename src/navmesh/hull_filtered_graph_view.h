@@ -20,6 +20,11 @@ struct NavCostConfig
     float dropBaseCost = 48.0f;
     float dropCostPerUnit = 1.0f;
     bool allowDrops = true;
+    float maxDrop = 100000.0f; // выше этого конкретная entity не спрыгивает
+    // Прыжок вверх: по умолчанию entity не прыгает (maxJump = 0).
+    float maxJump = 0.0f;
+    float jumpBaseCost = 64.0f;
+    float jumpCostPerUnit = 1.5f;
 };
 
 class NavGraphView : public IGraph
@@ -56,7 +61,12 @@ public:
             {
                 continue;
             }
-            if (type == kEdgeDrop && !m_cost.allowDrops)
+            const float edgeHeight = NavDecodeHeight(node.edgeHeight[dir]);
+            if (type == kEdgeDrop && (!m_cost.allowDrops || edgeHeight > m_cost.maxDrop + 2.0f))
+            {
+                continue;
+            }
+            if (type == kEdgeJump && edgeHeight > m_cost.maxJump + 0.5f)
             {
                 continue;
             }
@@ -81,6 +91,10 @@ public:
             if (type == kEdgeDrop)
             {
                 cost += m_cost.dropBaseCost + m_cost.dropCostPerUnit * (node.pos.z - target.pos.z);
+            }
+            else if (type == kEdgeJump)
+            {
+                cost += m_cost.jumpBaseCost + m_cost.jumpCostPerUnit * edgeHeight;
             }
 
             outNeighbors.Push(node.edgeTarget[dir], cost);

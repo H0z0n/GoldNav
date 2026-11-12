@@ -3,7 +3,7 @@
 #pragma once
 
 #define MODULE_NAME     "GoldNav"
-#define MODULE_VERSION  "1.0.0-beta"
+#define MODULE_VERSION  "1.1.0-beta"
 #define MODULE_AUTHOR   "Hozon"
 #define MODULE_URL      "https://t.me/AmxM0dX"
 #define MODULE_LOGTAG   "GOLDNAV"

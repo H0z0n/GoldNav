@@ -14,6 +14,8 @@
 #include "navmesh/nav_path_planner.h"
 #include "pathfollower/path_follower.h"
 #include "metamod/engine_collision_world.h"
+#include "metamod/obstacle_tracker.h"
+#include "navmesh/obstacle_set.h"
 
 namespace goldnav {
 
@@ -47,6 +49,12 @@ public:
     int GetEntityState(edict_t* ent) const;
 
     void SetMoveCallback(GoldNavMoveCallback callback) { m_callback = callback; }
+
+    void SetEntityJumpHeight(edict_t* ent, float height);
+    void SetEntityMaxDrop(edict_t* ent, float height);
+
+    size_t ObstacleCount() const { return m_obstacles.Count(); }
+    size_t TrackedObjectCount() const { return m_tracker.TrackedCount(); }
 
     void RequestRebuild();
 
@@ -82,6 +90,14 @@ private:
         bool removeRequested = false;
     };
 
+    // Индивидуальные способности entity (см. GoldNav_SetEntityJumpHeight/MaxDrop).
+    struct EntityParams
+    {
+        int serial = 0;
+        float jumpHeight = 0.0f;
+        float maxDrop = -1.0f; // < 0 — общий предел
+    };
+
     struct FinishedEvent
     {
         int entityIndex;
@@ -93,7 +109,13 @@ private:
     void StartLayer(NavLayerData& data, NavLayer layer);
     void TickGeneration();
 
-    PlanConfig MakePlanConfig(int flags) const;
+    PlanConfig MakePlanConfig(int flags, const edict_t* ent) const;
+    const EntityParams* ParamsOf(const edict_t* ent) const;
+    EntityParams* ParamsFor(edict_t* ent);
+    float JumpHeightOf(const edict_t* ent) const;
+    bool IsBeingMoved(int entIndex) const;
+    void InvalidateRegion(const DirtyBox& box);
+    void UpdateDynamicObjects();
     void UpdateAgent(int entIndex, Agent& agent, float frameTime);
     void PlanAgent(edict_t* ent, Agent& agent, const EntityHullInfo& hull);
     void FinishAgent(int entIndex, edict_t* ent, Agent& agent, int state);
@@ -102,7 +124,13 @@ private:
     static bool IsValidEntity(const edict_t* ent);
 
     NavLayerData m_layers[static_cast<size_t>(NavLayer::Count)];
-    EngineCollisionWorld m_world;
+    EngineCollisionWorld m_world;                     // карта и brush-энтити (трассы движка)
+    ObstacleSet m_obstacles;                          // коробки стоящих entity
+    ObstacleWorld m_navWorld{ m_world, m_obstacles }; // то, что видит навмеш: карта + коробки
+    ObstacleTracker m_tracker;
+    std::vector<DirtyBox> m_dirty;
+    bool m_navChanged = false;
+    std::unordered_map<int, EntityParams> m_params;   // ключ — ENTINDEX
     NavPathPlanner m_planner;
     PathFollower m_follower;
 

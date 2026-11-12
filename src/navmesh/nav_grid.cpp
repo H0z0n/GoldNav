@@ -99,7 +99,7 @@ uint32_t NavGrid::AddNode(int gx, int gy, float z, uint8_t variantMask, uint8_t 
     return id;
 }
 
-void NavGrid::SetEdge(uint32_t from, int dir, uint32_t to, uint8_t variantMask, uint8_t type)
+void NavGrid::SetEdge(uint32_t from, int dir, uint32_t to, uint8_t variantMask, uint8_t type, float height)
 {
     if (from >= m_nodes.size() || dir < 0 || dir >= kNavDirCount)
     {
@@ -110,6 +110,24 @@ void NavGrid::SetEdge(uint32_t from, int dir, uint32_t to, uint8_t variantMask, 
     node.edgeTarget[dir] = to;
     node.edgeMask[dir] = variantMask;
     node.edgeType[dir] = (to == kInvalidNodeId || variantMask == 0) ? static_cast<uint8_t>(kEdgeNone) : type;
+    node.edgeHeight[dir] = NavEncodeHeight(height);
+    ++m_revision;
+}
+
+void NavGrid::ClearEdges(uint32_t nodeId)
+{
+    if (nodeId >= m_nodes.size())
+    {
+        return;
+    }
+    NavNode& node = m_nodes[nodeId];
+    for (int dir = 0; dir < kNavDirCount; ++dir)
+    {
+        node.edgeTarget[dir] = kInvalidNodeId;
+        node.edgeMask[dir] = 0;
+        node.edgeType[dir] = kEdgeNone;
+        node.edgeHeight[dir] = 0;
+    }
     ++m_revision;
 }
 

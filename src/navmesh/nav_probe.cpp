@@ -127,6 +127,45 @@ bool DropToFloor(const ICollisionWorld& world, const Vec3& feet, HullIndex hull,
     return true;
 }
 
+bool ProbeJump(const ICollisionWorld& world, const Vec3& fromFeet, float toX, float toY, HullIndex hull,
+               const ProbeConfig& config, float maxJump, Vec3& outFeet, float& outRise)
+{
+    if (maxJump <= config.stepHeight)
+    {
+        return false;
+    }
+
+    const Vec3 start(fromFeet.x, fromFeet.y, fromFeet.z + kLift);
+
+    HullTrace up;
+    world.TraceHull(start, Vec3(start.x, start.y, fromFeet.z + maxJump + kLift), hull, up);
+    if (up.startSolid || up.allSolid || up.endPos.z - fromFeet.z <= config.stepHeight)
+    {
+        return false; // над головой нет места для прыжка
+    }
+
+    // Для обычной стены проба заканчивается здесь — двумя трассами.
+    const Vec3 top = up.endPos;
+    HullTrace forward;
+    world.TraceHull(top, Vec3(toX, toY, top.z), hull, forward);
+    if (!forward.Clear())
+    {
+        return false;
+    }
+
+    // Пол должен найтись выше ступеньки: иначе это не "запрыгнуть", а обычный шаг/спуск.
+    HullTrace down;
+    world.TraceHull(forward.endPos, Vec3(toX, toY, fromFeet.z + config.stepHeight), hull, down);
+    if (!down.Hit() || down.normal.z < config.minGroundNormalZ)
+    {
+        return false;
+    }
+
+    outFeet = down.endPos;
+    outRise = down.endPos.z - fromFeet.z;
+    return outRise > config.stepHeight;
+}
+
 ProbeResult ProbeMove(const ICollisionWorld& world, const Vec3& fromFeet, float toX, float toY,
                       HullIndex hull, const ProbeConfig& config)
 {

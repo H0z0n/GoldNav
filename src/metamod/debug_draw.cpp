@@ -125,9 +125,10 @@ void DebugDraw_Tick()
                     }
                     const NavNode& other = grid.Node(node.edgeTarget[dir]);
                     const bool drop = node.edgeType[dir] == kEdgeDrop;
+                    const bool jump = node.edgeType[dir] == kEdgeJump;
                     DrawBeam(Vector(node.pos.x, node.pos.y, node.pos.z + 2.0f),
                              Vector(other.pos.x, other.pos.y, other.pos.z + 2.0f),
-                             drop ? 255 : 0, drop ? 0 : 255, 0, 2);
+                             drop ? 255 : 0, (drop || jump) ? (jump ? 120 : 0) : 255, jump ? 255 : 0, 2);
                     ++beams;
                 }
             }

@@ -16,6 +16,7 @@ struct SlideResult
     bool hit = false;       // было хоть одно столкновение
     bool stuck = false;     // стартовали внутри геометрии
     bool hitGround = false; // среди столкновений была поверхность-пол
+    bool hitCeiling = false;
     Vec3 wallNormal;        // нормаль первой "стены"
     bool hitWall = false;
     int wallEntity = -1;
@@ -78,6 +79,10 @@ SlideResult Slide(IMoveTracer& tracer, const Vec3& start, const Vec3& delta, boo
         }
         else
         {
+            if (normal.z < -0.7f)
+            {
+                result.hitCeiling = true;
+            }
             if (flattenWalls && normal.z > 0.0f)
             {
                 normal.z = 0.0f;
@@ -155,6 +160,19 @@ bool IsGroundHit(const HullTrace& tr, float minGroundNormalZ)
 }
 
 } // namespace
+
+void StartJump(MoverState& state, const Vec3& feet, float height, float gravity)
+{
+    if (height <= 0.0f || gravity <= 0.0f)
+    {
+        return;
+    }
+    state.initialized = true;
+    state.onGround = false;
+    state.groundEntity = -1;
+    state.fallStartZ = feet.z;
+    state.fallSpeed = -std::sqrt(2.0f * gravity * height);
+}
 
 MoveOutcome GroundMove(IMoveTracer& tracer, const Vec3& feetIn, const Vec3& wishVelocity, float dt,
                        MoverState& state, const MoverConfig& config)
@@ -321,7 +339,13 @@ MoveOutcome GroundMove(IMoveTracer& tracer, const Vec3& feetIn, const Vec3& wish
         return outcome;
     }
 
-    if (air.hitGround)
+    if (air.hitCeiling && state.fallSpeed < 0.0f)
+    {
+        state.fallSpeed = 0.0f; // упёрлись головой — дальше только вниз
+    }
+
+    // Пол, задетый на взлёте (например, край пандуса), приземлением не считается.
+    if (air.hitGround && state.fallSpeed >= 0.0f)
     {
         state.onGround = true;
         state.groundEntity = air.groundEntity;

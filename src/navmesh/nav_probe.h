@@ -39,6 +39,12 @@ struct ProbeResult
 ProbeResult ProbeMove(const ICollisionWorld& world, const Vec3& fromFeet, float toX, float toY,
                       HullIndex hull, const ProbeConfig& config);
 
+// Пробует запрыгнуть от fromFeet на уступ в точке (toX, toY): вверх не выше maxJump,
+// вперёд, вниз на пол. true — если там есть пол ВЫШЕ ступеньки (обычный шаг его не
+// берёт); outRise — на сколько нужно подняться.
+bool ProbeJump(const ICollisionWorld& world, const Vec3& fromFeet, float toX, float toY, HullIndex hull,
+               const ProbeConfig& config, float maxJump, Vec3& outFeet, float& outRise);
+
 // Опускает хулл из точки вниз до пола. false, если хулл в точке не помещается,
 // пол дальше maxDistance либо под точкой крутой склон.
 bool DropToFloor(const ICollisionWorld& world, const Vec3& feet, HullIndex hull, float maxDistance,

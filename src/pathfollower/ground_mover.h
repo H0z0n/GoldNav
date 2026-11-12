@@ -38,7 +38,7 @@ struct MoverState
 {
     bool initialized = false;
     bool onGround = false;
-    float fallSpeed = 0.0f;  // текущая скорость падения (юнитов/с, вниз положительная)
+    float fallSpeed = 0.0f;  // вертикальная скорость (юнитов/с): вниз положительная, в прыжке — отрицательная
     float fallStartZ = 0.0f; // высота, с которой началось текущее падение
     int groundEntity = -1;   // на чём стоим (0 — мир)
 };
@@ -54,6 +54,10 @@ struct MoveOutcome
     float landedDrop = 0.0f;  // с какой высоты упали
     bool stuckInSolid = false; // entity стоит внутри геометрии и вытолкнуть её не удалось
 };
+
+// Начинает прыжок: entity отрывается от земли со скоростью, достаточной, чтобы поднять
+// ноги на height юнитов. Дальше её ведёт обычная "воздушная" ветка GroundMove.
+void StartJump(MoverState& state, const Vec3& feet, float height, float gravity);
 
 // Один шаг движения за dt секунд с желаемой горизонтальной скоростью wishVelocity
 // (Z игнорируется).

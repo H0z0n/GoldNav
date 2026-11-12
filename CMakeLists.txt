@@ -62,6 +62,7 @@ add_library(goldnav_core STATIC
     src/navmesh/nav_hull_defs.cpp
     src/navmesh/nav_grid.cpp
     src/navmesh/nav_probe.cpp
+    src/navmesh/obstacle_set.cpp
     src/navmesh/nav_generator.cpp
     src/navmesh/nav_path_planner.cpp
     src/pathfinder/astar.cpp
@@ -87,6 +88,7 @@ if(GOLDNAV_BUILD_ENGINE_MODULE)
     if(HLSDK_FOUND)
         add_library(goldnav_mm SHARED
             src/metamod/engine_collision_world.cpp
+            src/metamod/obstacle_tracker.cpp
             src/core/goldnav_module.cpp
             src/core/logger.cpp
             src/core/config.cpp

@@ -8,6 +8,8 @@
 native bool:goldnav_move_to(entity, const Float:goal[3], Float:speed = 200.0, hull = GOLDNAV_HULL_AUTO, flags = 0);
 native goldnav_stop_following(entity);
 native goldnav_get_state(entity);                       // GOLDNAV_STATE_*
+native goldnav_set_jump_height(entity, Float:height);   // как высоко запрыгивает (0 — не прыгает)
+native goldnav_set_max_drop(entity, Float:height);      // с какой высоты спрыгивает (< 0 — общий предел)
 native bool:goldnav_is_ready(hull = GOLDNAV_HULL_STANDING);
 
 native bool:goldnav_find_path(const Float:from[3], const Float:to[3], Float:outPath[], maxLen, &outLen, hull = GOLDNAV_HULL_STANDING);
@@ -21,6 +23,20 @@ forward goldnav_move_finished(entity, result);          // ARRIVED или FAILED
 путь при сбоях и останавливает её в цели. Если навмеш ещё строится, запрос ждёт сам
 (состояние `PENDING`). Цель не обязана быть достижимой: entity подойдёт как можно ближе
 (с флагом `GOLDNAV_MOVE_EXACT` — вернёт `FAILED`).
+
+**Прыжки и спрыгивание.** По умолчанию entity берёт только ступеньки (`sv_stepsize`, 18) и
+спрыгивает с уступов до `goldnav_max_drop` (150). `goldnav_set_jump_height` разрешает ей
+запрыгивать на уступы и ящики до заданной высоты (прыжок игрока CS — 45, с приседом — 63;
+рёбра-прыжки строятся до `goldnav_max_jump`, 64). Значения запоминаются за entity до её удаления
+и действуют со следующего `goldnav_move_to`. `goldnav_find_path` прыжки не использует — он
+ищет путь "пешком".
+
+**Динамические объекты.** Двери, платформы, ломаемые стёкла и стоящие entity с `SOLID_BBOX`
+учитываются автоматически: объект сменил положение и остановился (дверь — 0.3 с, коробка — 1 с) —
+сетка вокруг перестраивается, идущие entity перепланируют путь. Игроки, монстры (`FL_MONSTER`)
+и entity, которых GoldNav сейчас ведёт, препятствиями в сетке не считаются — их обходит на месте
+сам "ходок". Entity, которую GoldNav довёл и оставил стоять, через секунду становится
+препятствием для остальных.
 
 **Состояния:** `IDLE` 0, `PENDING` 1, `MOVING` 2, `ARRIVED` 3, `FAILED` 4.
 
@@ -58,6 +74,7 @@ forward goldnav_move_finished(entity, result);          // ARRIVED или FAILED
 
 `include/goldnav/goldnav_api.h` — те же функции в виде `extern "C"`:
 `GoldNav_MoveEntityTo`, `GoldNav_StopFollowing`, `GoldNav_GetEntityState`,
+`GoldNav_SetEntityJumpHeight`, `GoldNav_SetEntityMaxDrop`,
 `GoldNav_FindPath`, `GoldNav_FindPathToEntity`, `GoldNav_MoveEntityAlongPath`,
 `GoldNav_IsNavMeshReady`, `GoldNav_IsHullReady`, `GoldNav_SetMoveCallback`,
 `GoldNav_GetVersion`, `GoldNav_EdictByIndex`. Только сырые указатели и длины — никаких

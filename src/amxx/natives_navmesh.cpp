@@ -35,6 +35,8 @@ struct GoldNavApi
     void (*MoveEntityAlongPath)(edict_t*, const Vector*, int, float) = nullptr;
     void (*StopFollowing)(edict_t*) = nullptr;
     int (*GetEntityState)(edict_t*) = nullptr;
+    void (*SetEntityJumpHeight)(edict_t*, float) = nullptr;
+    void (*SetEntityMaxDrop)(edict_t*, float) = nullptr;
     bool (*IsNavMeshReady)() = nullptr;
     bool (*IsHullReady)(int) = nullptr;
     void (*SetMoveCallback)(GoldNavMoveCallback) = nullptr;
@@ -100,6 +102,8 @@ bool BindApi()
     ok = Resolve(api.MoveEntityAlongPath, "GoldNav_MoveEntityAlongPath") && ok;
     ok = Resolve(api.StopFollowing, "GoldNav_StopFollowing") && ok;
     ok = Resolve(api.GetEntityState, "GoldNav_GetEntityState") && ok;
+    ok = Resolve(api.SetEntityJumpHeight, "GoldNav_SetEntityJumpHeight") && ok;
+    ok = Resolve(api.SetEntityMaxDrop, "GoldNav_SetEntityMaxDrop") && ok;
     ok = Resolve(api.IsNavMeshReady, "GoldNav_IsNavMeshReady") && ok;
     ok = Resolve(api.IsHullReady, "GoldNav_IsHullReady") && ok;
     ok = Resolve(api.SetMoveCallback, "GoldNav_SetMoveCallback") && ok;
@@ -308,6 +312,38 @@ cell AMX_NATIVE_CALL native_goldnav_stop_following(AMX* amx, cell* params)
     return 1;
 }
 
+// native goldnav_set_jump_height(entity, Float:height);
+cell AMX_NATIVE_CALL native_goldnav_set_jump_height(AMX* amx, cell* params)
+{
+    if (!RequireApi(amx, "goldnav_set_jump_height"))
+    {
+        return 0;
+    }
+    edict_t* entity = RequireEntity(amx, "goldnav_set_jump_height", params[1]);
+    if (!entity)
+    {
+        return 0;
+    }
+    g_api.SetEntityJumpHeight(entity, amx_ctof(params[2]));
+    return 1;
+}
+
+// native goldnav_set_max_drop(entity, Float:height);
+cell AMX_NATIVE_CALL native_goldnav_set_max_drop(AMX* amx, cell* params)
+{
+    if (!RequireApi(amx, "goldnav_set_max_drop"))
+    {
+        return 0;
+    }
+    edict_t* entity = RequireEntity(amx, "goldnav_set_max_drop", params[1]);
+    if (!entity)
+    {
+        return 0;
+    }
+    g_api.SetEntityMaxDrop(entity, amx_ctof(params[2]));
+    return 1;
+}
+
 // native goldnav_get_state(entity);
 cell AMX_NATIVE_CALL native_goldnav_get_state(AMX* /*amx*/, cell* params)
 {
@@ -348,6 +384,8 @@ AMX_NATIVE_INFO g_NavmeshNatives[] = {
     { "goldnav_move_along_path",     native_goldnav_move_along_path },
     { "goldnav_stop_following",      native_goldnav_stop_following },
     { "goldnav_get_state",           native_goldnav_get_state },
+    { "goldnav_set_jump_height",     native_goldnav_set_jump_height },
+    { "goldnav_set_max_drop",        native_goldnav_set_max_drop },
     { "goldnav_is_ready",            native_goldnav_is_ready },
     { nullptr, nullptr },
 };

@@ -84,6 +84,16 @@ GOLDNAV_API void GoldNav_MoveEntityAlongPath(edict_t* entity, const Vector* path
 // Останавливает ведение entity (без побочных эффектов, если её никто не ведёт).
 GOLDNAV_API void GoldNav_StopFollowing(edict_t* entity);
 
+// Как высоко entity умеет запрыгивать (юнитов). По умолчанию 0 — не прыгает, берёт
+// только ступеньки (sv_stepsize). Для сравнения: прыжок игрока CS — 45, с приседом — 63.
+// Рёбра-прыжки в навмеше строятся до высоты cvar goldnav_max_jump. Запоминается за
+// entity до её удаления; действует со следующего запроса пути.
+GOLDNAV_API void GoldNav_SetEntityJumpHeight(edict_t* entity, float height);
+
+// С какой высоты entity готова спрыгивать (юнитов). Отрицательное значение — вернуть
+// общий предел (cvar goldnav_max_drop).
+GOLDNAV_API void GoldNav_SetEntityMaxDrop(edict_t* entity, float height);
+
 // GOLDNAV_STATE_* для entity.
 GOLDNAV_API int GoldNav_GetEntityState(edict_t* entity);
 

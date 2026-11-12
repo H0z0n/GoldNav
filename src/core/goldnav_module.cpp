@@ -55,8 +55,9 @@ void GoldNavModule::StartLayer(NavLayerData& data, NavLayer layer)
     config.cellSize = ConfigCellSize();
     config.probe.stepHeight = ConfigStepSize();
     config.probe.maxDrop = ConfigMaxDrop();
+    config.maxJump = ConfigMaxJump();
 
-    data.generator.Begin(data.grid, m_world, layer, config);
+    data.generator.Begin(data.grid, m_navWorld, layer, config);
     data.started = true;
     data.initialDone = false;
     data.wasBusy = true;
@@ -131,8 +132,15 @@ void GoldNavModule::TickGeneration()
             }
             else
             {
-                GOLDNAV_LOG_INFO("navmesh [%s] extended: %u nodes", LayerName(static_cast<NavLayer>(i)),
-                                 static_cast<unsigned>(data.grid.NodeCount()));
+                // Граф обновился (открылась дверь, поставили ящик, досеяли область) —
+                // идущим entity стоит перепланировать путь.
+                m_navChanged = true;
+                if (ConfigDebugDrawEnabled())
+                {
+                    GOLDNAV_LOG_INFO("navmesh [%s] updated: %u nodes, %u obstacles", LayerName(static_cast<NavLayer>(i)),
+                                     static_cast<unsigned>(data.grid.NodeCount()),
+                                     static_cast<unsigned>(m_obstacles.Count()));
+                }
             }
         }
         else if (!data.generator.IsIdle() && data.initialDone && !data.wasBusy)
@@ -151,6 +159,16 @@ void GoldNavModule::OnServerActivate()
         data = NavLayerData();
     }
 
+    m_obstacles.Clear();
+    m_params.clear();
+    m_navChanged = false;
+    m_tracker.Reset();
+    if (ConfigDynamicEnabled())
+    {
+        // Ящики и прочие стоящие entity должны попасть в навмеш уже при первичной генерации.
+        m_tracker.InitialScan(m_obstacles, [this](int entIndex) { return IsBeingMoved(entIndex); });
+    }
+
     m_active = true;
     // Основной слой (хуллы 32x32) нужен почти всем — строим сразу. Остальные — по
     // первому запросу.
@@ -160,6 +178,9 @@ void GoldNavModule::OnServerActivate()
 void GoldNavModule::OnServerDeactivate()
 {
     m_active = false;
+    m_obstacles.Clear();
+    m_params.clear();
+    m_tracker.Reset();
     m_agents.clear();
     m_finished.clear();
     for (NavLayerData& data : m_layers)
@@ -209,14 +230,114 @@ bool GoldNavModule::IsHullReady(int hullType)
     return EnsureLayer(LayerOfHull(ClampHullIndex(hullType))).initialDone;
 }
 
+// --- Динамические объекты и индивидуальные параметры entity ---
+
+bool GoldNavModule::IsBeingMoved(int entIndex) const
+{
+    const auto it = m_agents.find(entIndex);
+    return it != m_agents.end() &&
+           (it->second.state == GOLDNAV_STATE_MOVING || it->second.state == GOLDNAV_STATE_PENDING);
+}
+
+void GoldNavModule::InvalidateRegion(const DirtyBox& box)
+{
+    for (NavLayerData& data : m_layers)
+    {
+        if (data.started)
+        {
+            data.generator.InvalidateRegion(box.mins, box.maxs);
+        }
+    }
+}
+
+void GoldNavModule::UpdateDynamicObjects()
+{
+    if (!ConfigDynamicEnabled() || !gpGlobals)
+    {
+        return;
+    }
+
+    m_dirty.clear();
+    m_tracker.Update(gpGlobals->time, m_obstacles,
+                     [this](int entIndex) { return IsBeingMoved(entIndex); }, m_dirty);
+
+    for (const DirtyBox& box : m_dirty)
+    {
+        InvalidateRegion(box);
+    }
+}
+
+const GoldNavModule::EntityParams* GoldNavModule::ParamsOf(const edict_t* ent) const
+{
+    if (!ent)
+    {
+        return nullptr;
+    }
+    const auto it = m_params.find(ENTINDEX(const_cast<edict_t*>(ent)));
+    if (it == m_params.end() || it->second.serial != ent->serialnumber)
+    {
+        return nullptr; // параметры остались от entity, которая раньше занимала этот слот
+    }
+    return &it->second;
+}
+
+GoldNavModule::EntityParams* GoldNavModule::ParamsFor(edict_t* ent)
+{
+    if (!IsValidEntity(ent))
+    {
+        return nullptr;
+    }
+    EntityParams& params = m_params[ENTINDEX(ent)];
+    if (params.serial != ent->serialnumber)
+    {
+        params = EntityParams();
+        params.serial = ent->serialnumber;
+    }
+    return &params;
+}
+
+float GoldNavModule::JumpHeightOf(const edict_t* ent) const
+{
+    const EntityParams* params = ParamsOf(ent);
+    if (!params || params->jumpHeight <= 0.0f)
+    {
+        return 0.0f;
+    }
+    // Выше, чем построены рёбра-прыжки, прыгать всё равно некуда.
+    return std::min(params->jumpHeight, ConfigMaxJump());
+}
+
+void GoldNavModule::SetEntityJumpHeight(edict_t* ent, float height)
+{
+    if (EntityParams* params = ParamsFor(ent))
+    {
+        params->jumpHeight = height > 0.0f ? height : 0.0f;
+    }
+}
+
+void GoldNavModule::SetEntityMaxDrop(edict_t* ent, float height)
+{
+    if (EntityParams* params = ParamsFor(ent))
+    {
+        params->maxDrop = height;
+    }
+}
+
 // --- Поиск пути ---
 
-PlanConfig GoldNavModule::MakePlanConfig(int flags) const
+PlanConfig GoldNavModule::MakePlanConfig(int flags, const edict_t* ent) const
 {
     PlanConfig config;
     config.probe.stepHeight = ConfigStepSize();
     config.probe.maxDrop = ConfigMaxDrop();
     config.cost.allowDrops = (flags & GOLDNAV_MOVE_NO_DROP) == 0;
+    config.cost.maxJump = JumpHeightOf(ent);
+
+    const EntityParams* params = ParamsOf(ent);
+    if (params && params->maxDrop >= 0.0f)
+    {
+        config.cost.maxDrop = params->maxDrop;
+    }
     return config;
 }
 
@@ -235,10 +356,10 @@ bool GoldNavModule::FindPath(const Vec3& from, const Vec3& to, int hullType, std
         return false;
     }
 
-    PlanConfig config = MakePlanConfig(0);
+    PlanConfig config = MakePlanConfig(0, nullptr);
     config.allowPartial = false;
 
-    PlanResult plan = m_planner.Plan(layer.grid, &m_world, from, to, hull, config);
+    PlanResult plan = m_planner.Plan(layer.grid, &m_navWorld, from, to, hull, config);
     if (plan.status == PlanStatus::NoStartNode || plan.status == PlanStatus::NoGoalNode)
     {
         // Рядом со стартом/целью навмеша нет — досеиваем туда; следующий запрос
@@ -281,6 +402,22 @@ GoldNavModule::Agent* GoldNavModule::BeginAgent(edict_t* ent, int& outIndex)
             GOLDNAV_LOG_WARN("players/bots cannot be moved by GoldNav (entity #%d); use FindPath for them", outIndex);
         }
         return nullptr;
+    }
+
+    // Пока entity стояла, она сама числилась препятствием в навмеше. Теперь её ведём мы —
+    // освобождаем её место и сразу (в пределах пары миллисекунд) перепроверяем узлы
+    // вокруг, иначе путь пришлось бы искать "из-под ящика".
+    DirtyBox freed;
+    if (m_tracker.ForceRemove(outIndex, m_obstacles, freed))
+    {
+        InvalidateRegion(freed);
+        for (NavLayerData& data : m_layers)
+        {
+            if (data.started && data.initialDone)
+            {
+                data.generator.Tick(3.0);
+            }
+        }
     }
 
     Agent& agent = m_agents[outIndex];
@@ -437,7 +574,9 @@ void GoldNavModule::PlanAgent(edict_t* ent, Agent& agent, const EntityHullInfo& 
     }
 
     NavLayerData& layer = EnsureLayer(LayerOfHull(planHull));
-    if (!layer.initialDone)
+    // Граф ещё строится или прямо сейчас обновляется (дверь, ящик) — ждём согласованного
+    // состояния: это доли секунды, а путь по наполовину обновлённому графу был бы случайным.
+    if (!layer.initialDone || !layer.generator.IsIdle())
     {
         agent.state = GOLDNAV_STATE_PENDING;
         return;
@@ -445,8 +584,8 @@ void GoldNavModule::PlanAgent(edict_t* ent, Agent& agent, const EntityHullInfo& 
 
     const Vec3 feet = FromEngine(ent->v.origin) + hull.feetOffset;
 
-    PlanConfig config = MakePlanConfig(agent.flags);
-    PlanResult plan = m_planner.Plan(layer.grid, &m_world, feet, agent.goal, planHull, config);
+    PlanConfig config = MakePlanConfig(agent.flags, ent);
+    PlanResult plan = m_planner.Plan(layer.grid, &m_navWorld, feet, agent.goal, planHull, config);
 
     if (plan.status == PlanStatus::NoStartNode || plan.status == PlanStatus::NoGoalNode)
     {
@@ -554,6 +693,8 @@ void GoldNavModule::UpdateAgent(int entIndex, Agent& agent, float frameTime)
     followerConfig.mover.stepHeight = ConfigStepSize();
     followerConfig.mover.gravity = ConfigGravity() * (ent->v.gravity != 0.0f ? ent->v.gravity : 1.0f);
 
+    agent.follow.jumpHeight = JumpHeightOf(ent);
+
     EntityMoveTracer tracer(ent, hull.feetOffset);
     const FollowStep step = m_follower.Update(agent.follow, tracer, agent.mover, feet, agent.speed, frameTime);
 
@@ -634,7 +775,21 @@ void GoldNavModule::OnStartFrame(float frameTime)
         return;
     }
 
+    UpdateDynamicObjects();
     TickGeneration();
+
+    if (m_navChanged)
+    {
+        m_navChanged = false;
+        for (auto& entry : m_agents)
+        {
+            if (entry.second.state == GOLDNAV_STATE_MOVING)
+            {
+                entry.second.state = GOLDNAV_STATE_PENDING; // перепланирует в этом же кадре
+                entry.second.pendingTime = 0.0f;
+            }
+        }
+    }
 
     if (!m_agents.empty())
     {
@@ -770,6 +925,16 @@ void GoldNav_StopFollowing(edict_t* entity)
     GoldNavModule::Instance().StopEntity(entity);
 }
 
+void GoldNav_SetEntityJumpHeight(edict_t* entity, float height)
+{
+    GoldNavModule::Instance().SetEntityJumpHeight(entity, height);
+}
+
+void GoldNav_SetEntityMaxDrop(edict_t* entity, float height)
+{
+    GoldNavModule::Instance().SetEntityMaxDrop(entity, height);
+}
+
 int GoldNav_GetEntityState(edict_t* entity)
 {
     return GoldNavModule::Instance().GetEntityState(entity);
@@ -788,7 +953,7 @@ bool GoldNav_IsHullReady(int hullType)
 int GoldNav_GetVersion(void)
 {
     constexpr int kMajor = 1;
-    constexpr int kMinor = 0;
+    constexpr int kMinor = 1;
     constexpr int kPatch = 0;
     return kMajor * 10000 + kMinor * 100 + kPatch;
 }

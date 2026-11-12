@@ -28,7 +28,7 @@ mutil_funcs_t* gpMetaUtilFuncs;
 plugin_info_t Plugin_info = {
     META_INTERFACE_VERSION,
     "GoldNav",
-    "1.0.0-beta",
+    "1.1.0-beta",
     __DATE__,
     "Hozon",
     "https://t.me/AmxM0dX",

@@ -85,6 +85,21 @@ native bool:goldnav_move_to(entity, const Float:goal[3], Float:speed = 200.0, hu
 native goldnav_stop_following(entity);
 
 /**
+ * Задаёт, как высоко entity умеет запрыгивать (юнитов). По умолчанию 0: entity не
+ * прыгает и берёт только ступеньки (sv_stepsize, 18). Для сравнения: прыжок игрока —
+ * 45, прыжок с приседом — 63. Выше cvar goldnav_max_jump (64) смысла нет: рёбра-прыжки
+ * в навмеше строятся только до этой высоты.
+ * Запоминается за entity до её удаления; действует со следующего goldnav_move_to.
+ */
+native goldnav_set_jump_height(entity, Float:height);
+
+/**
+ * Задаёт, с какой высоты entity готова спрыгивать (юнитов). Отрицательное значение —
+ * вернуть общий предел (cvar goldnav_max_drop, 150).
+ */
+native goldnav_set_max_drop(entity, Float:height);
+
+/**
  * @return GOLDNAV_STATE_* для entity.
  */
 native goldnav_get_state(entity);

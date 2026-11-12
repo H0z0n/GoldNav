@@ -16,6 +16,13 @@ float ConfigGenerationBudgetMs();
 // С какой высоты entity ещё может спрыгнуть с уступа (goldnav_max_drop).
 float ConfigMaxDrop();
 
+// До какой высоты строить рёбра-прыжки (goldnav_max_jump). Сама entity прыгает не выше,
+// чем ей задано через GoldNav_SetEntityJumpHeight.
+float ConfigMaxJump();
+
+// Учитывать ли динамические объекты: двери, поставленные ящики и т.п. (goldnav_dynamic).
+bool ConfigDynamicEnabled();
+
 // Показывать ли отладочную визуализацию (goldnav_debug).
 bool ConfigDebugDrawEnabled();
 

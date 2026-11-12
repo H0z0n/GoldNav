@@ -35,6 +35,13 @@ struct FollowState
     int stuckStrikes = 0;        // сколько окон подряд без продвижения
     int idleWindows = 0;         // сколько окон подряд ушло на обход без продвижения
 
+    // Текущая горизонтальная скорость (для инерции). Переживает смену пути.
+    Vec3 velocity;
+
+    // На какую высоту entity умеет запрыгивать (0 — не прыгает) и пауза до следующей попытки.
+    float jumpHeight = 0.0f;
+    float jumpCooldown = 0.0f;
+
     // Обход препятствия боком.
     float sidestepTimeLeft = 0.0f;
     Vec3 sidestepDir;

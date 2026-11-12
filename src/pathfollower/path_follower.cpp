@@ -14,8 +14,14 @@ Vec3 Flat(const Vec3& v)
 
 } // namespace
 
-bool PathFollower::AdvanceWaypoints(FollowState& state, const Vec3& feet, bool onGround) const
+bool PathFollower::AdvanceWaypoints(FollowState& state, const Vec3& feet, bool onGround, float speed) const
 {
+    // Чем быстрее идём, тем раньше начинаем поворачивать к следующей точке: на
+    // скорости в саму точку всё равно не вписаться, а поворот "в последний момент"
+    // выглядит рывком.
+    const float turnRadius = std::max(m_config.waypointRadius,
+                                      std::min(m_config.maxTurnInRadius, speed * m_config.turnInPerSpeed));
+
     while (state.currentIndex < state.path.size())
     {
         const Vec3& target = state.path[state.currentIndex];
@@ -32,7 +38,7 @@ bool PathFollower::AdvanceWaypoints(FollowState& state, const Vec3& feet, bool o
         }
         else if (heightOk)
         {
-            if (dist <= m_config.waypointRadius)
+            if (dist <= turnRadius)
             {
                 reached = true;
             }
@@ -83,9 +89,10 @@ FollowStep PathFollower::Update(FollowState& state, IMoveTracer& tracer, MoverSt
     // Пока mover не инициализирован, считаем что стоим: первый же GroundMove уточнит.
     const bool groundedBefore = !mover.initialized || mover.onGround;
 
-    if (AdvanceWaypoints(state, feet, groundedBefore))
+    if (AdvanceWaypoints(state, feet, groundedBefore, speed))
     {
         state.active = false;
+        state.velocity = Vec3();
         step.result = FollowResult::Arrived;
         return step;
     }
@@ -93,12 +100,13 @@ FollowStep PathFollower::Update(FollowState& state, IMoveTracer& tracer, MoverSt
     const Vec3 target = state.path[state.currentIndex];
     const bool isLast = (state.currentIndex + 1 == state.path.size());
     const float distToTarget = Distance2D(feet, target);
+    const float stepHeight = m_config.mover.stepHeight;
 
     // Мы прямо под точкой, а она этажом выше: по этому пути до неё уже не дойти.
     // Если же точка НИЖЕ нас — это спрыгивание с уступа: продолжаем идти к ней,
     // пока край не кончится под ногами (хулл шире шага сетки и ещё опирается на уступ).
     if (groundedBefore && distToTarget <= m_config.waypointRadius &&
-        target.z - feet.z > m_config.heightTolerance)
+        target.z - feet.z > std::max(m_config.heightTolerance, state.jumpHeight + 2.0f))
     {
         step.result = FollowResult::OffPath;
         return step;
@@ -107,18 +115,16 @@ FollowStep PathFollower::Update(FollowState& state, IMoveTracer& tracer, MoverSt
     Vec3 direction = Flat(target - feet).Normalized();
 
     float moveSpeed = speed;
-    if (isLast)
+    const bool finalApproach = isLast && distToTarget < m_config.slowDownRadius;
+    if (finalApproach)
     {
-        if (distToTarget < m_config.slowDownRadius)
-        {
-            const float factor = std::max(m_config.minSpeedFactor, distToTarget / m_config.slowDownRadius);
-            moveSpeed = speed * factor;
-        }
-        // Не перелетаем цель: последний шаг ровно до неё.
-        if (dt > 0.0f && moveSpeed * dt > distToTarget)
-        {
-            moveSpeed = distToTarget / dt;
-        }
+        const float factor = std::max(m_config.minSpeedFactor, distToTarget / m_config.slowDownRadius);
+        moveSpeed = speed * factor;
+    }
+    // Не перелетаем цель: последний шаг ровно до неё.
+    if (isLast && dt > 0.0f && moveSpeed * dt > distToTarget)
+    {
+        moveSpeed = distToTarget / dt;
     }
 
     Vec3 wishDir = direction;
@@ -135,7 +141,26 @@ FollowStep PathFollower::Update(FollowState& state, IMoveTracer& tracer, MoverSt
         }
     }
 
-    const MoveOutcome outcome = GroundMove(tracer, feet, wishDir * moveSpeed, dt, mover, m_config.mover);
+    // --- Инерция ---
+    // Скорость не прыгает к желаемой мгновенно, а подтягивается к ней с ограниченным
+    // ускорением: плавный разгон, повороты по дуге вместо излома. В воздухе и на
+    // последних юнитах перед целью управляем напрямую — там важна точность.
+    const Vec3 desired = wishDir * moveSpeed;
+    const bool airborne = mover.initialized && !mover.onGround;
+    Vec3 velocity = desired;
+    if (!airborne && !finalApproach && m_config.acceleration > 0.0f)
+    {
+        Vec3 delta = desired - state.velocity;
+        const float maxDelta = m_config.acceleration * speed * dt;
+        const float deltaLen = delta.Length2D();
+        if (deltaLen > maxDelta && deltaLen > 0.0f)
+        {
+            delta = delta * (maxDelta / deltaLen);
+        }
+        velocity = Flat(state.velocity + delta);
+    }
+
+    const MoveOutcome outcome = GroundMove(tracer, feet, velocity, dt, mover, m_config.mover);
 
     step.feet = outcome.feet;
     step.touchedEntity = outcome.touchedEntity;
@@ -148,6 +173,36 @@ FollowStep PathFollower::Update(FollowState& state, IMoveTracer& tracer, MoverSt
     step.speed = dt > 0.0f ? moved / dt : 0.0f;
     step.facing = moved > 0.05f ? Flat(outcome.feet - feet).Normalized() : direction;
     step.result = FollowResult::Moving;
+
+    // Упёрлись в стену — "разгон" в неё не копится: продолжаем от фактической скорости.
+    // Иначе помним заданную (а не измеренную: при очень коротком кадре сдвиг за кадр
+    // меньше порога движения, и измеренная скорость навсегда осталась бы нулевой).
+    if (outcome.blocked && mover.onGround && dt > 0.0f)
+    {
+        state.velocity = Flat(outcome.feet - feet) * (1.0f / dt);
+    }
+    else
+    {
+        state.velocity = airborne ? desired : velocity;
+    }
+
+    // --- Прыжок ---
+    // Следующая точка пути — на уступе выше ступеньки, мы упёрлись в него, а прыгать
+    // на такую высоту entity умеет: отталкиваемся. Дальше в воздухе идём к точке.
+    state.jumpCooldown -= dt;
+    if (mover.onGround && outcome.blocked && state.jumpHeight > stepHeight && state.jumpCooldown <= 0.0f)
+    {
+        const float rise = target.z - outcome.feet.z;
+        if (rise > stepHeight * 0.75f && rise <= state.jumpHeight + 2.0f &&
+            Distance2D(outcome.feet, target) <= m_config.jumpMaxDistance)
+        {
+            StartJump(mover, outcome.feet, rise + m_config.jumpMargin, m_config.mover.gravity);
+            state.jumpCooldown = m_config.jumpCooldown;
+            state.windowValid = false;
+            step.jumped = true;
+            return step;
+        }
+    }
 
     // Препятствие осталось позади (перестали его касаться) — заканчиваем обход,
     // оставив короткий хвост, чтобы угол хулла тоже прошёл.
@@ -175,7 +230,7 @@ FollowStep PathFollower::Update(FollowState& state, IMoveTracer& tracer, MoverSt
     }
 
     // Приземлились после падения не там, куда вёл путь — пусть перестроят.
-    if (outcome.landed && outcome.landedDrop > m_config.mover.stepHeight)
+    if (outcome.landed && outcome.landedDrop > stepHeight)
     {
         if (Distance2D(outcome.feet, target) > m_config.offPathLandingDistance ||
             std::fabs(target.z - outcome.feet.z) > m_config.heightTolerance)

@@ -41,6 +41,9 @@ void Cmd_GoldNavStatus()
     Print("[GoldNav] status: navReady=%d, entities being moved: %u\n",
           module.IsReady() ? 1 : 0, static_cast<unsigned>(module.AgentCount()));
 
+    Print("  dynamic objects: %u tracked, %u standing boxes in navmesh\n",
+          static_cast<unsigned>(module.TrackedObjectCount()), static_cast<unsigned>(module.ObstacleCount()));
+
     for (size_t i = 0; i < static_cast<size_t>(NavLayer::Count); ++i)
     {
         const NavLayerData& layer = module.Layer(static_cast<NavLayer>(i));

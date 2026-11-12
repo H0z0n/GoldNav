@@ -12,9 +12,13 @@
  *   goldnav_stop      | say /stop     — остановить
  *   goldnav_remove    | say /remove   — удалить своих кур
  *   goldnav_where     | say /where    — координаты точки прицела
+ *   goldnav_block     | say /block    — поставить по прицелу препятствие (красная курица):
+ *                                       через секунду навмеш учтёт его, и куры пойдут в обход
+ *   goldnav_unblock   | say /unblock  — убрать свои препятствия
  *
  * Квары:
  *   goldnav_chicken_speed 150   — скорость кур, юнитов/с
+ *   goldnav_chicken_jump 45     — как высоко куры запрыгивают, юнитов (0 — не прыгают)
  *   goldnav_chicken_path 1      — рисовать найденный путь лучом (видит только отправивший)
  *   goldnav_chicken_admin 0     — 1: команды только для админов (флаг "d", ADMIN_BAN)
  *
@@ -28,10 +32,11 @@
 #include <goldnav>
 
 #define PLUGIN  "GoldNav Chicken"
-#define VERSION "1.0.0-beta"
+#define VERSION "1.1.0-beta"
 #define AUTHOR  "Hozon"
 
 new const CHICKEN_CLASS[] = "goldnav_chicken"
+new const BLOCK_CLASS[]   = "goldnav_block"
 new const CHICKEN_MODEL[] = "models/chick.mdl"
 new const BEAM_SPRITE[]   = "sprites/laserbeam.spr"
 
@@ -51,7 +56,7 @@ const Float:FOLLOW_INTERVAL = 0.4
 const Float:FOLLOW_REPATH_DISTANCE = 72.0   // игрок отошёл дальше — ведём кур заново
 const Float:FOLLOW_STOP_DISTANCE = 80.0     // ближе этого к игроку куры не лезут
 
-new g_cvarSpeed, g_cvarDrawPath, g_cvarAdminOnly
+new g_cvarSpeed, g_cvarDrawPath, g_cvarAdminOnly, g_cvarJump
 new g_beamSprite
 new bool:g_following[33]
 new Float:g_followGoal[33][3]
@@ -64,6 +69,7 @@ public plugin_precache()
 
 public plugin_init()
 {
+    // Связь в TG: @AmxM0dX
     register_plugin(PLUGIN, VERSION, AUTHOR)
 
     register_clcmd("goldnav_chicken", "CmdSpawn")
@@ -72,6 +78,8 @@ public plugin_init()
     register_clcmd("goldnav_stop", "CmdStop")
     register_clcmd("goldnav_remove", "CmdRemove")
     register_clcmd("goldnav_where", "CmdWhere")
+    register_clcmd("goldnav_block", "CmdBlock")
+    register_clcmd("goldnav_unblock", "CmdUnblock")
 
     register_clcmd("say /chicken", "CmdSpawn")
     register_clcmd("say /goto", "CmdGoto")
@@ -79,8 +87,11 @@ public plugin_init()
     register_clcmd("say /stop", "CmdStop")
     register_clcmd("say /remove", "CmdRemove")
     register_clcmd("say /where", "CmdWhere")
+    register_clcmd("say /block", "CmdBlock")
+    register_clcmd("say /unblock", "CmdUnblock")
 
     g_cvarSpeed     = register_cvar("goldnav_chicken_speed", "150")
+    g_cvarJump      = register_cvar("goldnav_chicken_jump", "45")
     g_cvarDrawPath  = register_cvar("goldnav_chicken_path", "1")
     g_cvarAdminOnly = register_cvar("goldnav_chicken_admin", "0")
 
@@ -91,6 +102,7 @@ public client_disconnected(id)
 {
     g_following[id] = false
     RemoveChickens(id)
+    RemoveOwned(id, BLOCK_CLASS)
 }
 
 // --- Команды ---
@@ -202,6 +214,45 @@ public CmdRemove(id)
 
     g_following[id] = false
     client_print(id, print_chat, "[GoldNav] Удалено кур: %d", RemoveChickens(id))
+    return PLUGIN_HANDLED
+}
+
+public CmdBlock(id)
+{
+    if (!CanUse(id))
+        return PLUGIN_HANDLED
+
+    new Float:spot[3]
+    if (!GetAimSpot(id, spot, 24.0))
+        return PLUGIN_HANDLED
+
+    // Обычная entity с SOLID_BBOX, которую никто не ведёт: постояв секунду, она сама
+    // попадает в навмеш как препятствие — модулю о ней сообщать не нужно.
+    new ent = SpawnChicken(id, spot)
+    if (!ent)
+    {
+        client_print(id, print_chat, "[GoldNav] Не удалось поставить препятствие.")
+        return PLUGIN_HANDLED
+    }
+
+    set_pev(ent, pev_classname, BLOCK_CLASS)
+    set_pev(ent, pev_chicken_mark, 0)
+    set_pev(ent, pev_movetype, MOVETYPE_NONE)
+    set_pev(ent, pev_framerate, 0.0)
+    set_pev(ent, pev_renderfx, kRenderFxGlowShell)
+    set_pev(ent, pev_rendercolor, Float:{ 255.0, 40.0, 40.0 })
+    set_pev(ent, pev_renderamt, 40.0)
+
+    client_print(id, print_chat, "[GoldNav] Препятствие #%d поставлено. Через секунду куры будут его обходить (убрать: /unblock).", ent)
+    return PLUGIN_HANDLED
+}
+
+public CmdUnblock(id)
+{
+    if (!CanUse(id))
+        return PLUGIN_HANDLED
+
+    client_print(id, print_chat, "[GoldNav] Убрано препятствий: %d", RemoveOwned(id, BLOCK_CLASS))
     return PLUGIN_HANDLED
 }
 
@@ -323,6 +374,7 @@ SendChickens(owner, const Float:goal[3], bool:drawPath)
             continue
         }
 
+        goldnav_set_jump_height(ent, get_pcvar_float(g_cvarJump))
         if (!goldnav_move_to(ent, goal, speed, GOLDNAV_HULL_AUTO, flags))
             continue
 
@@ -364,6 +416,20 @@ RemoveChickens(owner)
         goldnav_stop_following(list[i])
         engfunc(EngFunc_RemoveEntity, list[i])
     }
+    return count
+}
+
+// Удаляет все entity данного класса, принадлежащие игроку.
+RemoveOwned(owner, const classname[])
+{
+    new list[64], count = 0, ent = -1
+    while (count < sizeof(list) && (ent = engfunc(EngFunc_FindEntityByString, ent, "classname", classname)) > 0)
+    {
+        if (pev_valid(ent) && pev(ent, pev_chicken_owner) == owner)
+            list[count++] = ent
+    }
+    for (new i = 0; i < count; i++)
+        engfunc(EngFunc_RemoveEntity, list[i])
     return count
 }
 
